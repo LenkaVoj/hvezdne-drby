@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hvězdné drby</title>
+<style>
+:root { --bg:#fdf0f5; --cream:#fffaf2; --brown:#caa0b3; --ink:#4a2540; --ink-soft:#8a5b78; --red:#c9436b; --green:#2f8f6f; --gold:#d4a017; }
+* { box-sizing: border-box; }
+html, body { margin:0; padding:0; min-height:100%; background:var(--bg); color:var(--ink); font-family: Georgia, 'Times New Roman', serif; }
+body { display:flex; flex-direction:column; align-items:center; padding:6vh 4vw; }
+.card { background:var(--cream); border:1.5px solid var(--brown); border-radius:10px; padding:28px 30px; max-width:560px; width:100%; box-shadow:0 4px 18px rgba(74,37,64,0.12); }
+button { font-family:inherit; cursor:pointer; }
+.progress-row { display:flex; justify-content:space-between; align-items:baseline; font-size:.85rem; color:var(--ink-soft); margin-bottom:6px; }
+.progress-bar-track { height:6px; background:#f0dde6; border-radius:3px; overflow:hidden; margin-bottom:20px; }
+.progress-bar-fill { height:100%; background:var(--green); border-radius:3px; transition:width .3s ease; }
+.timer-track { height:4px; background:#f0dde6; border-radius:2px; overflow:hidden; margin:4px 0 20px 0; }
+.timer-fill { height:100%; background:var(--gold); width:100%; transition:width 1s linear; }
+.topic { font-size:.8rem; text-transform:uppercase; letter-spacing:.08em; color:var(--ink-soft); margin-bottom:6px; text-align:center; }
+.question-text { font-size:1.28rem; text-align:center; line-height:1.4; margin:0 0 24px 0; }
+.options { display:flex; flex-direction:column; gap:12px; }
+.opt-btn { padding:16px 18px; font-size:1.05rem; text-align:left; background:#fff; border:1.5px solid var(--brown); border-radius:8px; color:var(--ink); transition:background .15s ease, transform .08s ease; }
+.opt-btn:hover { background:#fbeef3; }
+.opt-btn:active { transform:scale(.99); }
+.opt-btn:disabled { cursor:default; }
+.opt-btn.correct { background:#e2f2ec; border-color:var(--green); color:var(--green); font-weight:700; }
+.opt-btn.wrong { background:#f8e3ea; border-color:var(--red); color:var(--red); }
+.feedback-note { margin-top:14px; font-size:.92rem; font-style:italic; color:var(--ink-soft); min-height:1.4em; text-align:center; }
+.score-pill { display:inline-block; background:#f5e4ec; border-radius:20px; padding:3px 12px; font-size:.85rem; color:var(--ink-soft); }
+.rank-pill { display:inline-block; background:#e2f2ec; border-radius:20px; padding:3px 12px; font-size:.85rem; color:var(--green); font-weight:700; margin-left:6px; }
+.pill-group { display:flex; align-items:baseline; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="progress-row">
+      <span id="progressLabel">Otázka 1 / 27</span>
+      <span class="pill-group">
+        <span class="score-pill" id="scorePill">0 b</span>
+        <span class="rank-pill" id="rankPill"></span>
+      </span>
+    </div>
+    <div class="progress-bar-track"><div class="progress-bar-fill" id="progressFill" style="width:0%"></div></div>
+    <div class="timer-track"><div class="timer-fill" id="timerFill"></div></div>
+
+    <div class="topic" id="topic">…</div>
+    <p class="question-text" id="questionText">Načítám otázku…</p>
+    <div class="options" id="options"></div>
+    <p class="feedback-note" id="feedback"></p>
+  </div>
+
+<script>
+const TIME_LIMIT = 20;
+let answering = false;
+let timerInterval = null;
+
+const els = {
+  progressLabel: document.getElementById('progressLabel'),
+  progressFill: document.getElementById('progressFill'),
+  timerFill: document.getElementById('timerFill'),
+  scorePill: document.getElementById('scorePill'),
+  rankPill: document.getElementById('rankPill'),
+  topic: document.getElementById('topic'),
+  questionText: document.getElementById('questionText'),
+  options: document.getElementById('options'),
+  feedback: document.getElementById('feedback'),
+};
+
+function updateRankPill(rank, totalTeams) {
+  if (!rank || !totalTeams || totalTeams < 2) { els.rankPill.textContent = ''; return; }
+  els.rankPill.textContent = `${rank}. místo z ${totalTeams}`;
+}
+
+function startTimer() {
+  clearInterval(timerInterval);
+  const start = Date.now();
+  els.timerFill.style.transition = 'none';
+  els.timerFill.style.width = '100%';
+  requestAnimationFrame(() => { els.timerFill.style.transition = 'width 1s linear'; });
+  timerInterval = setInterval(() => {
+    const elapsed = (Date.now() - start) / 1000;
+    const pct = Math.max(0, 100 * (1 - elapsed / TIME_LIMIT));
+    els.timerFill.style.width = pct + '%';
+    if (elapsed >= TIME_LIMIT) clearInterval(timerInterval);
+  }, 200);
+}
+
+function loadQuestion() {
+  answering = false;
+  els.feedback.textContent = '';
+  fetch('/api/question').then(r => r.json()).then(data => {
+    if (data.error === 'no-session') { window.location.href = '/'; return; }
+    if (data.finished) { window.location.href = '/result'; return; }
+
+    els.progressLabel.textContent = `Otázka ${data.index + 1} / ${data.total}`;
+    els.progressFill.style.width = (100 * data.index / data.total) + '%';
+    els.scorePill.textContent = data.score_so_far + ' b';
+    updateRankPill(data.rank, data.total_teams);
+    els.topic.textContent = 'téma: ' + data.topic;
+    els.questionText.textContent = data.text;
+    els.options.innerHTML = '';
+    data.options.forEach(opt => {
+      const b = document.createElement('button');
+      b.className = 'opt-btn';
+      b.textContent = opt.text;
+      b.dataset.key = opt.key;
+      b.addEventListener('click', () => submitAnswer(opt.key));
+      els.options.appendChild(b);
+    });
+    startTimer();
+  }).catch(() => {
+    els.questionText.textContent = 'Chyba připojení k serveru — zkuste obnovit stránku.';
+  });
+}
+
+function submitAnswer(choice) {
+  if (answering) return;
+  answering = true;
+  clearInterval(timerInterval);
+  const buttons = els.options.querySelectorAll('.opt-btn');
+  buttons.forEach(b => b.disabled = true);
+
+  fetch('/api/answer', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({choice})
+  }).then(r => r.json()).then(data => {
+    if (data.error) { els.feedback.textContent = 'Chyba: ' + data.error; return; }
+    buttons.forEach(b => {
+      if (b.dataset.key === choice) {
+        b.classList.add(data.correct ? 'correct' : 'wrong');
+      }
+    });
+    els.feedback.textContent = (data.correct ? '✓ Správně! ' : '✗ Bohužel. ') + data.note;
+    els.scorePill.textContent = data.total_score + ' b';
+    updateRankPill(data.rank, data.total_teams);
+    setTimeout(() => {
+      if (data.finished) { window.location.href = '/result'; }
+      else { loadQuestion(); }
+    }, 1900);
+  }).catch(() => {
+    els.feedback.textContent = 'Chyba připojení — zkuste to znovu.';
+    answering = false;
+    buttons.forEach(b => b.disabled = false);
+  });
+}
+
+loadQuestion();
+</script>
+</body>
+</html>
